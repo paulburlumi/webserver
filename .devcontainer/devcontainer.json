@@ -1,0 +1,27 @@
+{
+	"name": "Go Development",
+	"image": "mcr.microsoft.com/devcontainers/go:1.25-trixie",
+    "features": {
+        "ghcr.io/devcontainers/features/github-cli:1": {}
+    },
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"eamodio.gitlens",
+				"davidanson.vscode-markdownlint",
+				"starfederation.datastar-vscode"
+			],
+			"settings": {
+				// https://github.com/golang/vscode-go/wiki/settings
+				"go.lintTool": "golangci-lint-v2",
+				"go.lintFlags": [
+					// "--fast-only" // TODO(pgb) - not working.. determine why and re-enable
+				]
+			}
+		}
+	},
+	"mounts": [
+		"source=${env:HOME}${env:USERPROFILE}/.ssh,target=/root/.ssh,type=bind,readonly"
+	],
+	"remoteUser": "vscode"
+}
