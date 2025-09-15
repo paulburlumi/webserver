@@ -42,11 +42,12 @@ func run(getenv func(string) string, stdout io.Writer) error {
 	rc := rowerCalc{table: table}
 
 	http.HandleFunc("/health", healthHandler)
+	http.HandleFunc("GET /masterscalc", rc.showMainPage)
 	http.HandleFunc("GET /masterscalc/rowers", rc.listRowers)
 	http.HandleFunc("POST /masterscalc/rowers", rc.createRower)
 	http.HandleFunc("DELETE /masterscalc/rowers/{idx}", rc.deleteRower)
 
-	slog.Info("Server starting", "url", "http://localhost:"+port+"/masterscalc/rowers")
+	slog.Info("Server starting", "url", "http://localhost:"+port+"/masterscalc")
 	if err := http.ListenAndServe(":"+port, nil); err != http.ErrServerClosed {
 		return fmt.Errorf("error starting server: %w", err)
 	}
@@ -61,7 +62,7 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 
 var ageBands = []struct {
 	Band   string
-	MinAge int
+	MinAge float64
 }{
 	{"A", 27},
 	{"B", 36},
@@ -146,13 +147,7 @@ func newRower(name string, birthYearOrAge int) (rower, error) {
 	if age < 1 {
 		return rower{}, fmt.Errorf("invalid birth year or age: %d", birthYearOrAge)
 	}
-	var band string
-	for _, ageBand := range ageBands {
-		if ageBand.MinAge > age {
-			break
-		}
-		band = ageBand.Band
-	}
+	band := calculateBand(float64(age))
 	if band == "" {
 		return rower{}, fmt.Errorf("%s aged %d is too young for a masters category", name, age)
 	}
@@ -162,6 +157,28 @@ func newRower(name string, birthYearOrAge int) (rower, error) {
 		Age:       age,
 		Band:      band,
 	}, nil
+}
+
+func calculateAverageAge(rowers []rower) float64 {
+	if len(rowers) == 0 {
+		return 0.0
+	}
+	totalAge := 0
+	for _, r := range rowers {
+		totalAge += r.Age
+	}
+	return float64(totalAge) / float64(len(rowers))
+}
+
+func calculateBand(age float64) string {
+	band := ""
+	for _, ageBand := range ageBands {
+		if ageBand.MinAge > age {
+			break
+		}
+		band = ageBand.Band
+	}
+	return band
 }
 
 const htmlTemplate = `<!DOCTYPE html>
@@ -182,10 +199,10 @@ const htmlTemplate = `<!DOCTYPE html>
 	</div>
 	<div class="mb-3">
 		<label for="inputYear" class="form-label">Year of Birth / Age on their Birthday this year</label>
-		<input id="inputYear" class="form-control" placeholder="e.g. 1988 or 37" type="number" min="1900" max="3000" value="" data-bind-year>
+		<input id="inputYear" class="form-control" placeholder="e.g. 1988 or 37" type="number" min="1900" max="3000" value="" data-bind-birth-year-or-age>
 	</div>
 	<div class="mb-3">
-		<button type="button" class="btn btn-secondary" data-on-click="@post('/masterscalc/rowers')">Add</button>
+		<button type="button" class="btn btn-secondary" data-attr-disabled="$name.length === 0 || !$birthYearOrAge" data-on-click="@post('/masterscalc/rowers')">Add</button>
 	</div>
 </form>
 </div>
@@ -200,8 +217,18 @@ const htmlTemplate = `<!DOCTYPE html>
 			<th>Actions</th>
 		</tr>
 	</thead>
-	{{.TableHTML}}
+	<tbody id="rower-table-body" data-on-load="@get('/masterscalc/rowers')"/>
 </table>
+</div>
+<div className='card'>
+	<div className='card-body'>
+	<p className='lead'>
+		Average age: <span className='badge rounded-pill bg-light' data-text="$averageAge" />
+	</p>
+	<p className='lead'>
+		Crew Masters Category: <span className='badge rounded-pill bg-light' data-text="$averageBand" />
+	</p>
+	</div>
 </div>
 </body>
 </html>`
@@ -228,8 +255,31 @@ const rowerTableTemplate = `<tbody id="rower-table-body">
 	{{end}}
 </tbody>`
 
+type rowerSignals struct {
+	Name           string `json:"name"`
+	BirthYearOrAge int    `json:"birthYearOrAge"`
+	AverageAge     string `json:"averageAge"`
+	AverageBand    string `json:"averageBand"`
+}
+
 type rowerCalc struct {
 	table *template.Template
+}
+
+func (rc *rowerCalc) showMainPage(w http.ResponseWriter, r *http.Request) {
+	slog.Info("Showing main page")
+
+	tmpl, err := template.New("main").Parse(htmlTemplate)
+	if err != nil {
+		http.Error(w, "Error parsing template", http.StatusInternalServerError)
+		return
+	}
+
+	err = tmpl.Execute(w, nil)
+	if err != nil {
+		http.Error(w, "Error executing template", http.StatusInternalServerError)
+		return
+	}
 }
 
 func (rc *rowerCalc) listRowers(w http.ResponseWriter, r *http.Request) {
@@ -240,66 +290,26 @@ func (rc *rowerCalc) listRowers(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("Using cookie storage", "rowerCount", len(rowers))
 
-	// Generate the table HTML for initial load
-	tableBuffer := new(strings.Builder)
-	if err := rc.table.Execute(tableBuffer, rowers); err != nil {
-		http.Error(w, "Error executing table template", http.StatusInternalServerError)
-		return
-	}
-
-	// Data to pass to the main template
-	templateData := struct {
-		TableHTML template.HTML
-	}{
-		TableHTML: template.HTML(tableBuffer.String()),
-	}
-
-	tmpl, err := template.New("rowing").Parse(htmlTemplate)
-	if err != nil {
-		http.Error(w, "Error parsing template", http.StatusInternalServerError)
-		return
-	}
-
-	err = tmpl.Execute(w, templateData)
-	if err != nil {
-		http.Error(w, "Error executing template", http.StatusInternalServerError)
-		return
-	}
-}
-
-func handleError(sse *datastar.ServerSentEventGenerator, err error, msg string, args ...any) {
-	if err != nil {
-		args = append(args, "error", err)
-	}
-
-	slog.Error(msg, args...)
-	if len(args) > 0 {
-		msg += fmt.Sprintf(" %v", args)
-	}
-	_ = sse.ExecuteScript("alert('" + msg + "');")
+	sse := datastar.NewSSE(w, r)
+	rc.PatchTable(sse, rowers)
 }
 
 func (rc *rowerCalc) createRower(w http.ResponseWriter, r *http.Request) {
-	type Add struct {
-		Name string `json:"name"`
-		Year int    `json:"year"`
-	}
-
-	add := Add{}
-	if err := datastar.ReadSignals(r, &add); err != nil {
+	signals := rowerSignals{}
+	if err := datastar.ReadSignals(r, &signals); err != nil {
 		sse := datastar.NewSSE(w, r)
 		handleError(sse, err, "Error reading signals")
 		return
 	}
 
-	rower, err := newRower(add.Name, add.Year)
+	rower, err := newRower(signals.Name, signals.BirthYearOrAge)
 	if err != nil {
 		sse := datastar.NewSSE(w, r)
 		handleError(sse, err, "Error creating rower")
 		return
 	}
 
-	// Get existing rowers from cookie
+	// Get rowers from cookie
 	rowers := getRowersFromCookie(r)
 
 	// Add new rower
@@ -316,11 +326,6 @@ func (rc *rowerCalc) createRower(w http.ResponseWriter, r *http.Request) {
 
 	sse := datastar.NewSSE(w, r)
 	rc.PatchTable(sse, rowers)
-
-	if err := sse.MarshalAndPatchSignals(&Add{}); err != nil {
-		handleError(sse, err, "Error sending signal patch")
-		return
-	}
 }
 
 func (rc *rowerCalc) deleteRower(w http.ResponseWriter, r *http.Request) {
@@ -375,4 +380,28 @@ func (rc *rowerCalc) PatchTable(
 		handleError(sse, err, "Error sending element patch")
 		return
 	}
+
+	averageAge := calculateAverageAge(rowers)
+	averageBand := calculateBand(averageAge)
+
+	slog.Info("Updated averages", "averageAge", averageAge, "averageBand", averageBand)
+	if err := sse.MarshalAndPatchSignals(&rowerSignals{
+		AverageAge:  fmt.Sprintf("%.1f", averageAge),
+		AverageBand: averageBand,
+	}); err != nil {
+		handleError(sse, err, "Error sending signal patch")
+		return
+	}
+}
+
+func handleError(sse *datastar.ServerSentEventGenerator, err error, msg string, args ...any) {
+	if err != nil {
+		args = append(args, "error", err)
+	}
+
+	slog.Error(msg, args...)
+	if len(args) > 0 {
+		msg += fmt.Sprintf(" %v", args)
+	}
+	_ = sse.ExecuteScript("alert('" + msg + "');")
 }
