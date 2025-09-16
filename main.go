@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"embed"
 	"encoding/base64"
 	"encoding/gob"
 	"fmt"
 	"html/template"
 	"io"
+	"io/fs"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"slices"
@@ -17,6 +20,9 @@ import (
 
 	"github.com/starfederation/datastar-go/datastar"
 )
+
+//go:embed static/*
+var staticFiles embed.FS
 
 func main() {
 	if err := run(os.Getenv, os.Stdout); err != nil {
@@ -39,9 +45,15 @@ func run(getenv func(string) string, stdout io.Writer) error {
 		return fmt.Errorf("error parsing template: %w", err)
 	}
 
+	staticFS, err := fs.Sub(staticFiles, "static")
+	if err != nil {
+		return fmt.Errorf("could not create static file system: %w", err)
+	}
+
 	rc := rowerCalc{table: table}
 
 	http.HandleFunc("/health", healthHandler)
+	http.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	http.HandleFunc("GET /masterscalc", rc.showMainPage)
 	http.HandleFunc("GET /masterscalc/rowers", rc.listRowers)
 	http.HandleFunc("POST /masterscalc/rowers", rc.createRower)
@@ -137,7 +149,11 @@ type rower struct {
 	Band      string
 }
 
-func newRower(name string, birthYearOrAge int) (rower, error) {
+func newRower(name string, birthYearOrAgeStr string) (rower, error) {
+	birthYearOrAge, err := strconv.Atoi(birthYearOrAgeStr)
+	if err != nil {
+		return rower{}, fmt.Errorf("invalid birth year or age: %w", err)
+	}
 	birthYear := birthYearOrAge
 	thisYear := time.Now().Year()
 	if birthYearOrAge < 200 {
@@ -186,27 +202,29 @@ const htmlTemplate = `<!DOCTYPE html>
 <head>
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
-	<title>Rowing Calculator</title>
+	<title>MastersCalc</title>
+	<link rel="stylesheet" type="text/css" href="/static/css/styles.css">
 	<script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@1.0.0-RC.5/bundles/datastar.js"></script>
 </head>
 <body>
-<div>
+<h1>MastersCalc</h1>
+<div class="form-container">
 <form>
-	<div class="mb-3">
-		<div id="formHelp" class="form-text">Enter each crew member's details.</div>
+	<div class="form-group">
+		<div class="form-text">Enter each crew member's details.</div>
 		<label for="inputName" class="form-label">Name</label>
 		<input id="inputName" class="form-control" placeholder="e.g. Bob" value="" data-bind-name>
 	</div>
-	<div class="mb-3">
+	<div class="form-group">
 		<label for="inputYear" class="form-label">Year of Birth / Age on their Birthday this year</label>
-		<input id="inputYear" class="form-control" placeholder="e.g. 1988 or 37" type="number" min="1900" max="3000" value="" data-bind-birth-year-or-age>
+		<input id="inputYear" class="form-control" data-attr-placeholder="$example" type="number" min="1900" max="3000" data-bind-birth-year-or-age>
 	</div>
-	<div class="mb-3">
+	<div class="form-group">
 		<button type="button" class="btn btn-secondary" data-attr-disabled="$name.length === 0 || !$birthYearOrAge" data-on-click="@post('/masterscalc/rowers')">Add</button>
 	</div>
 </form>
 </div>
-<div>
+<div class="table-container">
 <table>
 	<thead>
 		<tr>
@@ -220,13 +238,13 @@ const htmlTemplate = `<!DOCTYPE html>
 	<tbody id="rower-table-body" data-on-load="@get('/masterscalc/rowers')"/>
 </table>
 </div>
-<div className='card'>
-	<div className='card-body'>
-	<p className='lead'>
-		Average age: <span className='badge rounded-pill bg-light' data-text="$averageAge" />
+<div class="card">
+	<div class="card-body">
+	<p class="lead">
+		Average age: <span class="badge" data-text="$averageAge" />
 	</p>
-	<p className='lead'>
-		Crew Masters Category: <span className='badge rounded-pill bg-light' data-text="$averageBand" />
+	<p class="lead">
+		Crew Masters Category: <span class="badge" data-text="$averageBand" />
 	</p>
 	</div>
 </div>
@@ -249,7 +267,7 @@ const rowerTableTemplate = `<tbody id="rower-table-body">
 			{{.Band}}
 		</td>
 		<td>
-			<button data-on-click="@delete('/masterscalc/rowers/{{$i}}')">Remove</button>
+			<button class="remove-btn" data-on-click="@delete('/masterscalc/rowers/{{$i}}')">Remove</button>
 		</td>
 	</tr>
 	{{end}}
@@ -257,9 +275,10 @@ const rowerTableTemplate = `<tbody id="rower-table-body">
 
 type rowerSignals struct {
 	Name           string `json:"name"`
-	BirthYearOrAge int    `json:"birthYearOrAge"`
+	BirthYearOrAge string `json:"birthYearOrAge"`
 	AverageAge     string `json:"averageAge"`
 	AverageBand    string `json:"averageBand"`
+	Example        string `json:"example"`
 }
 
 type rowerCalc struct {
@@ -384,10 +403,14 @@ func (rc *rowerCalc) PatchTable(
 	averageAge := calculateAverageAge(rowers)
 	averageBand := calculateBand(averageAge)
 
+	exampleInputAge := 27 + int(rand.Float64()*(85-27))
+	exampleInputYear := time.Now().Year() - exampleInputAge
+
 	slog.Info("Updated averages", "averageAge", averageAge, "averageBand", averageBand)
 	if err := sse.MarshalAndPatchSignals(&rowerSignals{
 		AverageAge:  fmt.Sprintf("%.1f", averageAge),
 		AverageBand: averageBand,
+		Example:     fmt.Sprintf("e.g. %d or %d", exampleInputYear, exampleInputAge),
 	}); err != nil {
 		handleError(sse, err, "Error sending signal patch")
 		return
