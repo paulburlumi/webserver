@@ -7,7 +7,7 @@ A web application for calculating rowing masters categories based on crew member
 - Interactive web interface for adding/removing crew members
 - Automatic masters category calculation based on age bands (A-K)
 - Real-time updates using Server-Sent Events (SSE)
-- Cookie-based data persistence
+- Server-side session storage with NATS JetStream
 - Responsive design with Datastar frontend
 - Health check endpoint for monitoring
 
@@ -36,14 +36,16 @@ go test -v
 
 ## Endpoints
 
-- `GET /masterscalc/rowers` - Main application interface for managing crew members
+- `GET /masterscalc` - Main application interface for managing crew members
+- `GET /masterscalc/rowers` - Server-sent events endpoint for real-time updates
 - `POST /masterscalc/rowers` - Add a new rower to the crew
 - `DELETE /masterscalc/rowers/{idx}` - Remove a rower from the crew by index
 - `GET /health` - Health check endpoint
+- `GET /static/*` - Static assets (CSS, etc.)
 
 ## Usage
 
-1. Navigate to `/masterscalc/rowers` in your browser
+1. Navigate to `http://localhost:8080/masterscalc` in your browser
 2. Enter crew member details:
    - **Name**: Rower's name
    - **Birth Year or Age**: Either birth year (e.g., 1988) or current age (e.g., 37)
@@ -70,14 +72,17 @@ The application calculates masters categories based on these age bands:
 ## Environment Variables
 
 - `PORT` - Server port (default: 8080)
+- `SESSION_SECRET` - Base64-encoded secret key for session management (required, generate with `go run cmd/sessionkey/main.go`)
 
 ## Technology Stack
 
 - **Backend**: Go with standard library HTTP server
-- **Frontend**: HTML templates with Datastar.js for reactivity
-- **Data Storage**: Browser cookies with GOB encoding
+- **Frontend**: HTML templates with Datastar for reactivity
+- **Data Storage**: Server-side NATS JetStream key-value store
 - **Dependencies**:
   - `github.com/starfederation/datastar-go` - Server-sent events and reactive updates
+  - `github.com/nats-io/nats.go` - NATS messaging system with JetStream
+  - `github.com/delaneyj/toolbelt/embeddednats` - Embedded NATS server
 
 ## Development
 
@@ -90,7 +95,8 @@ The project includes:
 
 ## Architecture
 
-- Cookie-based session storage for crew data
+- Server-side session storage using NATS JetStream key-value store
+- Embedded NATS server for persistent data storage
 - Server-sent events for real-time UI updates
 - Template-based HTML rendering
 - RESTful API design for crew management
