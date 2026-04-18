@@ -21,14 +21,18 @@ A web application for calculating rowing masters categories based on crew member
 
 ### Local Development
 
-Make sure you have Go 1.21+ installed:
+Make sure you have Go 1.26+ installed:
 
 ```bash
 # Install dependencies
 go mod tidy
 
+# Generate Session Key
+go run ./cmd/sessionkey
+Generated Session Key (base64): y1PzdclUJYM7U/BazlACST9AICFrnlpfEAbk2cYRbRU=
+
 # Run the server
-go run main.go
+SESSION_SECRET=y1PzdclUJYM7U/BazlACST9AICFrnlpfEAbk2cYRbRU= go run .
 
 # Run tests
 go test -v
@@ -72,7 +76,7 @@ The application calculates masters categories based on these age bands:
 ## Environment Variables
 
 - `PORT` - Server port (default: 8080)
-- `SESSION_SECRET` - Base64-encoded secret key for session management (required, generate with `go run cmd/sessionkey/main.go`)
+- `SESSION_SECRET` - Base64-encoded secret key for session management (required, generate with `go run ./cmd/sessionkey`)
 
 ## Technology Stack
 
@@ -83,6 +87,7 @@ The application calculates masters categories based on these age bands:
   - `github.com/starfederation/datastar-go` - Server-sent events and reactive updates
   - `github.com/nats-io/nats.go` - NATS messaging system with JetStream
   - `github.com/delaneyj/toolbelt/embeddednats` - Embedded NATS server
+  - `github.com/delaneyj/toolbelt/id` - Unique ID generation
 
 ## Development
 

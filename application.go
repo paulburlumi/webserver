@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/delaneyj/toolbelt"
+	toolbelt "github.com/delaneyj/toolbelt/id"
 	"github.com/gorilla/sessions"
 	"github.com/starfederation/datastar-go/datastar"
 )
@@ -20,7 +20,7 @@ const htmlTemplate = `<!DOCTYPE html>
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<title>MastersCalc</title>
 	<link rel="stylesheet" type="text/css" href="/static/css/styles.css">
-	<script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@1.0.0-RC.6/bundles/datastar.js"></script>
+	<script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@1.0.0/bundles/datastar.js"></script>
 </head>
 <body>
 <h1>MastersCalc</h1>
